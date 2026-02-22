@@ -6,7 +6,7 @@ from datetime import timedelta
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 import os
 from dotenv import load_dotenv
-
+from bson import ObjectId
 load_dotenv()
 
 app = Flask(__name__)
@@ -28,13 +28,12 @@ users = db.get_collection("users")
 
 @app.route("/auth/register", methods = ["POST"])
 def register():
-    id = str(len(list(users.find()))+1)
     username = request.form["username"]
     password = ph.hash(request.form["password"])
 
     role = request.form["role"]
 
-    user = {"_id":id,"username": username, "hash_password":password, "role":role}
+    user = {"username": username, "hash_password":password, "role":role}
 
     users.insert_one(user)
 
@@ -44,6 +43,7 @@ def register():
 def login():
     try:
         user = users.find_one({"username":request.form["username"]})
+        user["_id"] = str(user["_id"])
         ph.verify(user["hash_password"], request.form["password"])
 
         access_token = create_access_token(identity=user["_id"], additional_claims={"role": user["role"]})
@@ -55,9 +55,14 @@ def login():
 @jwt_required()
 def current_user():
 
-    user = get_jwt_identity()
-    document = users.find_one({"_id":user},{"hash_password":0})
+    user = ObjectId(get_jwt_identity())
 
+    print(user)
+    print(type(user))
+    document = users.find_one({"_id":user},{"hash_password":0})
+    
+    document["_id"] = str(document["_id"])
+    print(document)
     return jsonify(document),200
 
 if __name__ =='__main__':
