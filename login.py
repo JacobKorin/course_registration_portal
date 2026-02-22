@@ -54,14 +54,11 @@ def login():
 @app.route("/auth/me", methods = ["GET"])
 @jwt_required()
 def current_user():
-    token = request.headers.get('Authorization')
 
-    if token:
-        user = get_jwt_identity()
-        document = users.find_one({"_id":user},{"hash_password":0})
+    user = get_jwt_identity()
+    document = users.find_one({"_id":user},{"hash_password":0})
 
-        return jsonify(document),200
-    else:
-        return jsonify({"error":"Invalid Token"}),400
+    return jsonify(document),200
+
 if __name__ =='__main__':
     app.run(host='0.0.0.0',port=5000)
