@@ -56,13 +56,9 @@ def login():
 def current_user():
 
     user = ObjectId(get_jwt_identity())
-
-    print(user)
-    print(type(user))
     document = users.find_one({"_id":user},{"hash_password":0})
-    
     document["_id"] = str(document["_id"])
-    print(document)
+    
     return jsonify(document),200
 
 if __name__ =='__main__':
