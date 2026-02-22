@@ -1,9 +1,21 @@
 from flask import Flask, request, jsonify
 from pymongo import MongoClient
 from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+from datetime import timedelta
+from flask_jwt_extended import JWTManager, create_access_token
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 app = Flask(__name__)
+
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(minutes=30)
+
+jwt = JWTManager(app)
+
 ph = PasswordHasher()
 
 
@@ -16,7 +28,7 @@ users = db.get_collection("users")
 
 @app.route("/auth/register", methods = ["POST"])
 def register():
-    id = len(list(users.find()))+1
+    id = str(len(list(users.find()))+1)
     username = request.form["username"]
     password = ph.hash(request.form["password"])
 
@@ -27,5 +39,16 @@ def register():
     users.insert_one(user)
 
     return jsonify({"status": "success"}),201
+
+@app.route("/auth/login", methods = ["POST"])
+def login():
+    try:
+        user = users.find_one({"username":request.form["username"]})
+        ph.verify(user["hash_password"], request.form["password"])
+
+        access_token = create_access_token(identity=user["_id"], additional_claims={"role": user["role"]})
+        return jsonify(access_token=access_token), 200
+    except:
+        return jsonify({"error":"invalid password"}),400
 if __name__ =='__main__':
     app.run(host='0.0.0.0',port=5000)
