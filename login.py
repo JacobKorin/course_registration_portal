@@ -3,7 +3,7 @@ from pymongo import MongoClient
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from datetime import timedelta
-from flask_jwt_extended import JWTManager, create_access_token
+from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 import os
 from dotenv import load_dotenv
 
@@ -50,5 +50,18 @@ def login():
         return jsonify(access_token=access_token), 200
     except:
         return jsonify({"error":"invalid password"}),400
+ 
+@app.route("/auth/me", methods = ["GET"])
+@jwt_required()
+def current_user():
+    token = request.headers.get('Authorization')
+
+    if token:
+        user = get_jwt_identity()
+        document = users.find_one({"_id":user},{"hash_password":0})
+
+        return jsonify(document),200
+    else:
+        return jsonify({"error":"Invalid Token"}),400
 if __name__ =='__main__':
     app.run(host='0.0.0.0',port=5000)
