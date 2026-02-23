@@ -75,5 +75,28 @@ def course_deregister(course_id):
         return jsonify({"status":"delete successful"}),200
     else:
         return jsonify({"error":"course ID not found"}),404
+    
+@app.route("/courses/<course_id>/registrants", methods = ["GET"])
+@jwt_required()
+def all_registrants(course_id):
+    role = get_jwt()["role"]
+
+    if role == "professor":
+        course_id = ObjectId(course_id)
+        caller = ObjectId(get_jwt_identity())
+
+        course = courses_collection.find_one({"_id":course_id})
+        
+        if course:
+            if course["professor_id"] == caller:
+                registrants = list(registration_collection.find({"course_id":course_id},{"_id":0}))
+
+                for registrant in registrants:
+                    registrant["course_id"] = str(registrant["course_id"])
+                    registrant["registration_date"] = str(registrant["registration_date"])
+                    registrant["student_id"] = str(registrant["student_id"])
+
+                return jsonify(registrants), 200
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0',port=5100)
