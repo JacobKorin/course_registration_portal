@@ -5,10 +5,11 @@ from flask_jwt_extended import JWTManager, create_access_token, get_jwt, jwt_req
 import os
 from dotenv import load_dotenv
 from bson import ObjectId
+from flask_cors import CORS
 load_dotenv()
 
 app = Flask(__name__)
-
+CORS(app)
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY")
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(minutes=30)
 

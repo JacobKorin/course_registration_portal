@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Course Registration Portal (MVP)</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; max-width: 900px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; margin: 12px 0; }
+    input, select, button { padding: 8px; }
+    button { cursor: pointer; }
+    .muted { color: #666; }
+    .danger { color: #b00020; }
+    .success { color: #0a7a0a; }
+    .course { border: 1px solid #eee; padding: 12px; border-radius: 8px; margin: 10px 0; }
+    .course code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
+    .hidden { display: none; }
+    .spacer { height: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Course Registration Portal (MVP)</h1>
+  <p class="muted">Auth Service: <code>localhost:5000</code> • Courses Service: <code>localhost:5100</code></p>
+
+  <!-- AUTH -->
+  <div class="card" id="authCard">
+    <h2>Auth</h2>
+
+    <div class="row">
+      <div style="flex:1; min-width: 280px;">
+        <h3>Register</h3>
+        <div class="row">
+          <input id="regUsername" placeholder="username" />
+          <input id="regPassword" placeholder="password" type="password" />
+          <select id="regRole">
+            <option value="student">student</option>
+            <option value="professor">professor</option>
+          </select>
+        </div>
+        <div class="spacer"></div>
+        <button id="btnRegister">Register</button>
+      </div>
+
+      <div style="flex:1; min-width: 280px;">
+        <h3>Login</h3>
+        <div class="row">
+          <input id="loginUsername" placeholder="username" />
+          <input id="loginPassword" placeholder="password" type="password" />
+        </div>
+        <div class="spacer"></div>
+        <button id="btnLogin">Login</button>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+    <button id="btnLogout" class="hidden">Logout</button>
+
+    <p id="authStatus" class="muted"></p>
+  </div>
+
+  <!-- USER -->
+  <div class="card hidden" id="userCard">
+    <h2>Current User</h2>
+    <p><strong>ID:</strong> <span id="meId"></span></p>
+    <p><strong>Username:</strong> <span id="meUsername"></span></p>
+    <p><strong>Role:</strong> <span id="meRole"></span></p>
+  </div>
+
+  <!-- PROFESSOR: CREATE COURSE -->
+  <div class="card hidden" id="profCard">
+    <h2>Professor Actions</h2>
+    <h3>Create Course</h3>
+    <div class="row">
+      <input id="courseCode" placeholder="Course code (e.g., CSCI1010)" />
+      <button id="btnCreateCourse">Create</button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <h3>View Registrants</h3>
+    <div class="row">
+      <input id="registrantsCourseId" placeholder="Course _id" />
+      <button id="btnViewRegistrants">View</button>
+    </div>
+    <pre id="registrantsOutput" class="muted"></pre>
+  </div>
+
+  <!-- COURSES LIST -->
+  <div class="card">
+    <div class="row" style="align-items:center; justify-content: space-between;">
+      <h2 style="margin:0;">Courses</h2>
+      <button id="btnRefreshCourses">Refresh</button>
+    </div>
+    <div id="coursesList" class="muted">No courses loaded.</div>
+  </div>
+
+  <p id="msg" class="muted"></p>
+
+  <script>
+    // ---- CONFIG ----
+    const AUTH_BASE = "http://localhost:5000";
+    const COURSES_BASE = "http://localhost:5100";
+
+    // ---- STATE ----
+    const state = {
+      token: localStorage.getItem("access_token") || null,
+      me: null, // { _id, username, role }
+    };
+
+    // ---- HELPERS ----
+    function setMsg(text, cls="muted") {
+      const el = document.getElementById("msg");
+      el.className = cls;
+      el.textContent = text;
+    }
+
+    function authHeaders() {
+      const headers = {};
+      if (state.token) headers["Authorization"] = `Bearer ${state.token}`;
+      return headers;
+    }
+
+    // Since your Flask expects request.form, send URL-encoded form bodies.
+    function formBody(obj) {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(obj)) params.append(k, v);
+      return params;
+    }
+
+    async function safeJson(res) {
+      const text = await res.text();
+      try { return JSON.parse(text); } catch { return { raw: text }; }
+    }
+
+    function showHideUI() {
+      const userCard = document.getElementById("userCard");
+      const profCard = document.getElementById("profCard");
+      const btnLogout = document.getElementById("btnLogout");
+      const authStatus = document.getElementById("authStatus");
+
+      if (!state.token || !state.me) {
+        userCard.classList.add("hidden");
+        profCard.classList.add("hidden");
+        btnLogout.classList.add("hidden");
+        authStatus.textContent = "Not logged in.";
+        return;
+      }
+
+      userCard.classList.remove("hidden");
+      btnLogout.classList.remove("hidden");
+      authStatus.textContent = "Logged in (token stored in localStorage).";
+
+      document.getElementById("meId").textContent = state.me._id;
+      document.getElementById("meUsername").textContent = state.me.username;
+      document.getElementById("meRole").textContent = state.me.role;
+
+      if (state.me.role === "professor") profCard.classList.remove("hidden");
+      else profCard.classList.add("hidden");
+    }
+
+    // ---- AUTH CALLS ----
+    async function registerUser() {
+      setMsg("");
+      const username = document.getElementById("regUsername").value.trim();
+      const password = document.getElementById("regPassword").value;
+      const role = document.getElementById("regRole").value;
+
+      if (!username || !password) return setMsg("Username and password required.", "danger");
+
+      const res = await fetch(`${AUTH_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody({ username, password, role })
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) return setMsg(`Register failed: ${data.error || res.status}`, "danger");
+
+      setMsg("Registered successfully. Now login.", "success");
+    }
+
+    async function loginUser() {
+      setMsg("");
+      const username = document.getElementById("loginUsername").value.trim();
+      const password = document.getElementById("loginPassword").value;
+
+      if (!username || !password) return setMsg("Username and password required.", "danger");
+
+      const res = await fetch(`${AUTH_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formBody({ username, password })
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) return setMsg(`Login failed: ${data.error || res.status}`, "danger");
+
+      state.token = data.access_token;
+      localStorage.setItem("access_token", state.token);
+
+      await loadMe();
+      setMsg("Login successful.", "success");
+      await loadCourses();
+    }
+
+    async function loadMe() {
+      state.me = null;
+      if (!state.token) { showHideUI(); return; }
+
+      const res = await fetch(`${AUTH_BASE}/auth/me`, {
+        method: "GET",
+        headers: { ...authHeaders() }
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) {
+        // token invalid/expired
+        state.token = null;
+        localStorage.removeItem("access_token");
+        setMsg("Session expired or invalid. Please login again.", "danger");
+        showHideUI();
+        return;
+      }
+
+      state.me = data;
+      showHideUI();
+    }
+
+    function logoutUser() {
+      state.token = null;
+      state.me = null;
+      localStorage.removeItem("access_token");
+      setMsg("Logged out.", "success");
+      showHideUI();
+    }
+
+    // ---- COURSES CALLS ----
+    async function loadCourses() {
+      const listEl = document.getElementById("coursesList");
+      listEl.textContent = "Loading courses...";
+
+      const res = await fetch(`${COURSES_BASE}/courses`, { method: "GET" });
+      const data = await safeJson(res);
+
+      if (!res.ok) {
+        listEl.textContent = "Failed to load courses.";
+        setMsg(`Courses load failed: ${data.error || res.status}`, "danger");
+        return;
+      }
+
+      if (!Array.isArray(data) || data.length === 0) {
+        listEl.textContent = "No courses yet.";
+        return;
+      }
+
+      listEl.innerHTML = "";
+      data.forEach(course => {
+        const div = document.createElement("div");
+        div.className = "course";
+        div.innerHTML = `
+          <div><strong>Course:</strong> <code>${course.course_code}</code></div>
+          <div class="muted"><strong>Course ID:</strong> ${course._id}</div>
+          <div class="muted"><strong>Professor ID:</strong> ${course.professor_id}</div>
+          <div class="spacer"></div>
+          <div class="row">
+            <button data-action="register" data-id="${course._id}">Register</button>
+            <button data-action="drop" data-id="${course._id}">Drop</button>
+          </div>
+        `;
+        listEl.appendChild(div);
+      });
+
+      // Enable/disable buttons based on role
+      const buttons = listEl.querySelectorAll("button[data-action]");
+      buttons.forEach(btn => {
+        const action = btn.getAttribute("data-action");
+        if (!state.me) {
+          btn.disabled = true;
+          btn.title = "Login required";
+          return;
+        }
+        if (state.me.role !== "student") {
+          // In your backend you didn't enforce role checks yet; UI should still be correct
+          btn.disabled = true;
+          btn.title = "Only students can register/drop";
+          return;
+        }
+        btn.disabled = false;
+        btn.title = "";
+        btn.addEventListener("click", async () => {
+          const courseId = btn.getAttribute("data-id");
+          if (action === "register") await registerCourse(courseId);
+          if (action === "drop") await dropCourse(courseId);
+        });
+      });
+    }
+
+    async function createCourse() {
+      setMsg("");
+      const course_code = document.getElementById("courseCode").value.trim();
+      if (!course_code) return setMsg("Course code required.", "danger");
+      if (!state.me || state.me.role !== "professor") return setMsg("Only professors can create courses.", "danger");
+
+      const res = await fetch(`${COURSES_BASE}/courses`, {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: formBody({ course_code })
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) return setMsg(`Create course failed: ${data.error || res.status}`, "danger");
+
+      setMsg("Course created.", "success");
+      document.getElementById("courseCode").value = "";
+      await loadCourses();
+    }
+
+    async function registerCourse(courseId) {
+      setMsg("");
+      const res = await fetch(`${COURSES_BASE}/courses/${courseId}/register`, {
+        method: "POST",
+        headers: { ...authHeaders() }
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) return setMsg(`Register failed: ${data.error || res.status}`, "danger");
+
+      setMsg("Registered successfully.", "success");
+    }
+
+    async function dropCourse(courseId) {
+      setMsg("");
+      const res = await fetch(`${COURSES_BASE}/courses/${courseId}/register`, {
+        method: "DELETE",
+        headers: { ...authHeaders() }
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) return setMsg(`Drop failed: ${data.error || res.status}`, "danger");
+
+      setMsg("Dropped course (delete successful).", "success");
+    }
+
+    async function viewRegistrants() {
+      setMsg("");
+      const courseId = document.getElementById("registrantsCourseId").value.trim();
+      const out = document.getElementById("registrantsOutput");
+      out.textContent = "";
+
+      if (!courseId) return setMsg("Course ID required.", "danger");
+      if (!state.me || state.me.role !== "professor") return setMsg("Only professors can view registrants.", "danger");
+
+      const res = await fetch(`${COURSES_BASE}/courses/${courseId}/registrants`, {
+        method: "GET",
+        headers: { ...authHeaders() }
+      });
+
+      const data = await safeJson(res);
+      if (!res.ok) return setMsg(`Registrants failed: ${data.error || res.status}`, "danger");
+
+      out.textContent = JSON.stringify(data, null, 2);
+      setMsg("Registrants loaded.", "success");
+    }
+
+    // ---- WIRE UP EVENTS ----
+    document.getElementById("btnRegister").addEventListener("click", registerUser);
+    document.getElementById("btnLogin").addEventListener("click", loginUser);
+    document.getElementById("btnLogout").addEventListener("click", logoutUser);
+    document.getElementById("btnRefreshCourses").addEventListener("click", loadCourses);
+    document.getElementById("btnCreateCourse").addEventListener("click", createCourse);
+    document.getElementById("btnViewRegistrants").addEventListener("click", viewRegistrants);
+
+    // ---- INIT ----
+    (async function init() {
+      await loadMe();
+      await loadCourses();
+    })();
+  </script>
+</body>
+</html>
